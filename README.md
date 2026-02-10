@@ -1,10 +1,10 @@
 # bathymetry-tool
 
-Extract pipeline bathymetry data from high-resolution KP_Points_1m shapefile (65,000+ points at 1m spacing).
+A generic pipeline for extracting coordinate data from geospatial files (Shapefiles, KMZ, KML), computing segment distances and cumulative KP, and returning the results as CSV or JSON.
+
+Includes a FastAPI server with a single upload endpoint and a standalone Spirit pipeline script with GEBCO raster comparison.
 
 ## Quick Start
-
-**Prerequisites:**
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
@@ -12,55 +12,127 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Run it:**
+### Start the server
 
 ```bash
+uv run python main.py
+```
+
+The API is available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+
+### Run the Spirit pipeline script
+
+```bash
+uv sync --extra spirit
 uv run python extract_bathymetry.py
 ```
 
-Summary stats print to stdout, a CSV is exported, and a profile plot is saved as PNG.
+This reads the Spirit KP_Points_1m shapefile, samples GEBCO elevations, exports a 17-column CSV, and saves a profile plot.
 
-## Output
+## Docker
 
-| File                    | Description                                               |
-| ----------------------- | --------------------------------------------------------- |
-| `pipeline_segments.csv` | Segment data: coordinates, depths, lengths, cumulative KP |
-| `pipeline_profile.png`  | High-resolution bathymetry depth profile along pipeline   |
+```bash
+docker build -t bathymetry-tool .
+docker run -p 8000:8000 bathymetry-tool
+```
 
-### CSV Columns
+## API
 
-| Column                                     | Description                                               |
-| ------------------------------------------ | --------------------------------------------------------- |
-| `segment`                                  | Segment label (e.g. `1 -> 2`)                             |
-| `start_point`, `end_point`                 | Point indices                                             |
-| `start_easting`, `start_northing`          | Start coordinates (ED50 UTM Zone 30N, metres)             |
-| `end_easting`, `end_northing`              | End coordinates (ED50 UTM Zone 30N, metres)               |
-| `start_depth_m`, `end_depth_m`             | Seabed depth at each end (metres, negative below surface) |
-| `start_gebco_m`, `end_gebco_m`             | GEBCO 2025 elevation at each end (metres, ~450m res)      |
-| `elev_change_m`                            | Elevation change across the segment (survey)              |
-| `gebco_elev_change_m`                      | Elevation change across the segment (GEBCO)               |
-| `length_m`, `length_km`                    | Segment length (Euclidean)                                |
-| `cumulative_km_start`, `cumulative_km_end` | Cumulative distance along the pipeline                    |
+### `POST /process`
 
-## Input Data
+Upload geospatial files and receive pipeline segments back.
 
-The tool reads from `spirit/KP_Points/KP_Points_1m`, a POINTZ shapefile with ~65,883 3D points at 1-metre spacing along the Spirit pipeline route. Coordinates are in ED50 UTM Zone 30N; the Z values represent seabed depth (range approx. -31m to +3m).
+**Query parameters:**
 
-A GEBCO 2025 GeoTIFF subset (`gebco/gebco_2025_n54.0_s53.3_w-3.7_e-3.0_geotiff.tif`) provides global bathymetry at ~450m resolution in WGS84 (EPSG:4326). Pipeline coordinates are transformed from ED50 UTM 30N to WGS84 to sample this raster. The GEBCO elevation is included as a comparison line on the profile plot (coral) alongside the high-resolution survey data (steelblue).
+| Param    | Default | Description              |
+| -------- | ------- | ------------------------ |
+| `format` | `csv`   | Response format: `csv` or `json` |
 
-### Additional Data
+**Supported upload formats:**
 
-The `spirit/` directory also contains supporting shapefiles:
+| Format         | How to upload                                                |
+| -------------- | ------------------------------------------------------------ |
+| Shapefile      | Multiple files: `.shp` + `.shx` + `.dbf` (+ optional `.prj`) |
+| Zipped shapefile | Single `.zip` containing the shapefile components          |
+| KMZ            | Single `.kmz` file                                           |
+| KML            | Single `.kml` file                                           |
 
-| Dataset                                     | Format    | Content                                                        |
-| ------------------------------------------- | --------- | -------------------------------------------------------------- |
-| `MNZ_Export/MNZ_Export_Line`                | Shapefile | Pipeline route polyline (ED50 UTM 30N)                         |
-| `PipelinesANDCables/PipelineandCables_NSTA` | Shapefile | NSTA pipeline registry with names, diameters, operators        |
-| `PipelinesANDCables/KIS_ORCA_SHAPEFILE`     | Shapefile | KIS-ORCA subsea infrastructure                                 |
+**Examples:**
 
-## How It Works
+```bash
+# Shapefile (multi-file upload)
+curl -X POST http://localhost:8000/process \
+  -F "files=@route.shp" \
+  -F "files=@route.shx" \
+  -F "files=@route.dbf" \
+  -F "files=@route.prj"
 
-1. POINTZ shapes are read from the KP_Points_1m shapefile using `pyshp`
-2. Euclidean distances between consecutive points are computed (UTM coordinates)
-3. Cumulative KP (kilometre post) values are calculated as a running sum
-4. Results are printed as summary stats, exported to CSV, and plotted as a depth profile
+# Zipped shapefile
+curl -X POST http://localhost:8000/process \
+  -F "files=@route.zip"
+
+# KMZ
+curl -X POST http://localhost:8000/process \
+  -F "files=@route.kmz"
+
+# KML, JSON response
+curl -X POST "http://localhost:8000/process?format=json" \
+  -F "files=@route.kml"
+```
+
+**CSV columns (14):**
+
+| Column                                     | Description                             |
+| ------------------------------------------ | --------------------------------------- |
+| `segment`                                  | Segment label (e.g. `1 -> 2`)          |
+| `start_point`, `end_point`                 | Point indices                           |
+| `start_x`, `start_y`                       | Start coordinates (source CRS)          |
+| `end_x`, `end_y`                           | End coordinates (source CRS)            |
+| `start_z`, `end_z`                         | Elevation/depth at each end (if available) |
+| `z_change`                                 | Elevation change across the segment     |
+| `length_m`, `length_km`                    | Segment length (Euclidean)              |
+| `cumulative_km_start`, `cumulative_km_end` | Cumulative distance along the route     |
+
+**JSON response** includes a `metadata` object with auto-detected CRS, shape type, and point count, plus the full `segments` array.
+
+## Supported Shape Types
+
+| Type                  | Source     | Notes                                     |
+| --------------------- | ---------- | ----------------------------------------- |
+| POINT / POINTZ        | Shapefile  | One point per record                      |
+| POLYLINE / POLYLINEZ  | Shapefile  | All vertices across all parts and records |
+| LineString            | KML/KMZ    | All vertices from `<coordinates>`         |
+| Point                 | KML/KMZ    | One point per `<Placemark>`               |
+| POLYGON               | Shapefile  | Rejected with 422 error                   |
+
+CRS is auto-detected from the `.prj` file (shapefiles) or assumed WGS84 (KML/KMZ). For projected CRS, lon/lat values are computed automatically via reprojection to EPSG:4326.
+
+## Project Structure
+
+```
+bathymetry/
+  src/shapefile_pipeline/
+    __init__.py         # Package exports
+    models.py           # Pydantic data models
+    reader.py           # Shapefile reader (CRS + shape type auto-detection)
+    kml_reader.py       # KMZ/KML reader
+    segments.py         # Segment computation (distances, cumulative KP)
+    server.py           # FastAPI app with upload endpoint
+  extract_bathymetry.py # Spirit-specific script (GEBCO sampling, profile plot)
+  main.py               # Launches FastAPI server
+  pyproject.toml        # Dependencies and build config
+  Dockerfile            # Container image
+```
+
+## Spirit Pipeline Data
+
+The `spirit/` directory contains the project-specific data:
+
+| Dataset                                     | Format    | Content                                                 |
+| ------------------------------------------- | --------- | ------------------------------------------------------- |
+| `KP_Points/KP_Points_1m`                   | POINTZ    | 65,883 points at 1m spacing along the pipeline route    |
+| `MNZ_Export/MNZ_Export_Line`                | POLYLINEZ | Pipeline route polyline (286 vertices)                  |
+| `PipelinesANDCables/PipelineandCables_NSTA` | Shapefile | NSTA pipeline registry with names, diameters, operators |
+| `PipelinesANDCables/KIS_ORCA_SHAPEFILE`     | Shapefile | KIS-ORCA subsea infrastructure                          |
+
+All shapefiles use ED50 UTM Zone 30N (EPSG:23030). The GEBCO 2025 GeoTIFF in `gebco/` provides global bathymetry at ~450m resolution in WGS84 for comparison.
