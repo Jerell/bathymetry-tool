@@ -126,7 +126,7 @@ bathymetry/
 
 ## Spirit Pipeline Data
 
-The `spirit/` directory contains the project-specific data:
+The `sampledata/spirit/` directory contains the project-specific data:
 
 | Dataset                                     | Format    | Content                                                 |
 | ------------------------------------------- | --------- | ------------------------------------------------------- |

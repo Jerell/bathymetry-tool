@@ -14,7 +14,7 @@ from pyproj import Transformer
 
 from shapefile_pipeline import read_shapefile
 
-SHAPEFILE = Path(__file__).parent / "spirit" / "KP_Points" / "KP_Points_1m"
+SHAPEFILE = Path(__file__).parent / "sampledata" / "spirit" / "KP_Points" / "KP_Points_1m"
 GEBCO_RASTER = Path(__file__).parent / "gebco" / "gebco_2025_n54.0_s53.3_w-3.7_e-3.0_geotiff.tif"
 OUTPUT_CSV = Path(__file__).parent / "pipeline_segments.csv"
 OUTPUT_PLOT = Path(__file__).parent / "pipeline_profile.png"
