@@ -12,6 +12,7 @@ import shapefile
 from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
+from .kml_reader import read_kmz
 from .models import PipelineResult, Segment
 from .reader import detect_crs, read_shapefile
 from .segments import compute_segments
@@ -27,14 +28,18 @@ async def process_shapefile(
     files: list[UploadFile],
     format: str = Query("csv", pattern="^(csv|json)$"),
 ):
-    """Process uploaded shapefile(s) and return pipeline segments.
+    """Process uploaded shapefile(s) or KMZ/KML and return pipeline segments.
 
-    Accepts either:
-    - A single .zip containing the shapefile components
+    Accepts:
+    - A single .kmz or .kml file
+    - A single .zip containing shapefile components
     - Multiple files (.shp, .shx, .dbf, and optionally .prj)
     """
-    # Determine if this is a zip upload or multi-file upload
-    if len(files) == 1 and (files[0].filename or "").lower().endswith(".zip"):
+    filename = (files[0].filename or "").lower() if len(files) == 1 else ""
+
+    if filename.endswith((".kmz", ".kml")):
+        points, metadata = await _handle_kmz(files[0])
+    elif filename.endswith(".zip"):
         points, metadata = await _handle_zip(files[0])
     else:
         points, metadata = await _handle_multi_file(files)
@@ -90,6 +95,12 @@ async def _handle_zip(upload: UploadFile):
         return read_shapefile(shp_path)
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+async def _handle_kmz(upload: UploadFile):
+    """Process a KMZ or KML file upload."""
+    content = await upload.read()
+    return read_kmz(io.BytesIO(content))
 
 
 async def _handle_multi_file(files: list[UploadFile]):
