@@ -1,12 +1,27 @@
 [project]
 name = "bathymetry-tool"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generic shapefile-to-CSV pipeline tool"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "matplotlib>=3.10.8",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0",
     "pyproj>=3.7.2",
     "pyshp>=3.0.3",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+spirit = [
+    "matplotlib>=3.10.8",
     "rasterio>=1.5.0",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shapefile_pipeline"]

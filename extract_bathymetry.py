@@ -1,4 +1,8 @@
-"""Extract pipeline bathymetry data from the KP_Points_1m shapefile: compute cumulative KP, plot profile, and export CSV."""
+"""Extract pipeline bathymetry data from the KP_Points_1m shapefile: compute cumulative KP, plot profile, and export CSV.
+
+This script uses the generic shapefile_pipeline library for coordinate extraction
+and adds GEBCO raster sampling and Spirit-specific output on top.
+"""
 
 import csv
 import math
@@ -6,8 +10,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import rasterio
-import shapefile
 from pyproj import Transformer
+
+from shapefile_pipeline import read_shapefile
 
 SHAPEFILE = Path(__file__).parent / "spirit" / "KP_Points" / "KP_Points_1m"
 GEBCO_RASTER = Path(__file__).parent / "gebco" / "gebco_2025_n54.0_s53.3_w-3.7_e-3.0_geotiff.tif"
@@ -15,20 +20,9 @@ OUTPUT_CSV = Path(__file__).parent / "pipeline_segments.csv"
 OUTPUT_PLOT = Path(__file__).parent / "pipeline_profile.png"
 
 
-def read_shapefile(shp_path: Path) -> list[dict]:
-    """Read POINTZ shapefile and return list of dicts with easting, northing, depth."""
-    sf = shapefile.Reader(str(shp_path))
-    points = []
-    for shape in sf.shapes():
-        x, y = shape.points[0]
-        z = shape.z[0]
-        points.append({"easting": x, "northing": y, "depth_m": z})
-    return points
-
-
-def sample_gebco(points: list[dict], raster_path: Path) -> list[float | None]:
-    """Sample GEBCO elevation at each pipeline point by transforming ED50 UTM 30N → WGS84."""
-    transformer = Transformer.from_crs("EPSG:23030", "EPSG:4326", always_xy=True)
+def sample_gebco(points: list[dict], raster_path: Path, source_epsg: int = 23030) -> list[float | None]:
+    """Sample GEBCO elevation at each pipeline point by transforming from source CRS to WGS84."""
+    transformer = Transformer.from_crs(f"EPSG:{source_epsg}", "EPSG:4326", always_xy=True)
     eastings = [p["easting"] for p in points]
     northings = [p["northing"] for p in points]
     lons, lats = transformer.transform(eastings, northings)
@@ -51,7 +45,7 @@ def sample_gebco(points: list[dict], raster_path: Path) -> list[float | None]:
 
 
 def compute_segments(points: list[dict], gebco_elevations: list[float | None] | None = None) -> list[dict]:
-    """Compute segment data between consecutive points."""
+    """Compute segment data between consecutive points (Spirit-specific with GEBCO columns)."""
     segments = []
     cumulative_km = 0.0
     for i in range(1, len(points)):
@@ -103,6 +97,7 @@ def plot_profile(
     segments: list[dict],
     path: Path,
     gebco_elevations: list[float | None] | None = None,
+    title: str = "Pipeline Bathymetry Profile",
 ) -> None:
     """Generate a high-resolution depth profile plot."""
     kp = [0.0] + [s["cumulative_km_end"] for s in segments]
@@ -117,7 +112,7 @@ def plot_profile(
 
     ax.set_xlabel("KP (km)")
     ax.set_ylabel("Depth (m)")
-    ax.set_title("Pipeline Bathymetry Profile — Spirit Pipeline Network (1m resolution)")
+    ax.set_title(title)
     ax.axhline(0, color="black", linewidth=0.5, linestyle="--", alpha=0.5)
 
     all_depths = depths + [v for v in (gebco_elevations or []) if v is not None]
@@ -131,14 +126,21 @@ def plot_profile(
 
 def main():
     print(f"Reading shapefile: {SHAPEFILE}.shp\n")
-    points = read_shapefile(SHAPEFILE)
-    print(f"Loaded {len(points):,} points\n")
+    coord_points, metadata = read_shapefile(SHAPEFILE)
+    print(f"Loaded {len(coord_points):,} points")
+    print(f"Shape type: {metadata.shape_type_name}, CRS: EPSG:{metadata.crs_epsg} ({metadata.crs_name})\n")
+
+    # Convert CoordinatePoints to legacy dict format for GEBCO pipeline
+    points = [{"easting": p.x, "northing": p.y, "depth_m": p.z} for p in coord_points]
+
+    # Determine source EPSG for GEBCO sampling
+    source_epsg = metadata.crs_epsg or 23030
 
     # Sample GEBCO elevations
     gebco_elevations = None
     if GEBCO_RASTER.exists():
         print(f"Sampling GEBCO raster: {GEBCO_RASTER.name}")
-        gebco_elevations = sample_gebco(points, GEBCO_RASTER)
+        gebco_elevations = sample_gebco(points, GEBCO_RASTER, source_epsg=source_epsg)
         sampled = [v for v in gebco_elevations if v is not None]
         print(f"GEBCO coverage: {len(sampled):,} / {len(points):,} points sampled")
         if sampled:
@@ -159,7 +161,9 @@ def main():
     print()
 
     export_csv(segments, OUTPUT_CSV)
-    plot_profile(points, segments, OUTPUT_PLOT, gebco_elevations)
+
+    title = f"Pipeline Bathymetry Profile — {metadata.crs_name or 'Unknown CRS'} (1m resolution)"
+    plot_profile(points, segments, OUTPUT_PLOT, gebco_elevations, title=title)
 
 
 if __name__ == "__main__":
